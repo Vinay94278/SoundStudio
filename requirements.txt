@@ -1,0 +1,7 @@
+streamlit
+tensorflow
+numpy
+librosa
+matplotlib==3.4.3
+soundfile
+scipy

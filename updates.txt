@@ -1,0 +1,7 @@
+1. application of audio denoising in  - problem statement
+2. diagram for runtime and test time
+3. Business metrics - expectations
+4. Change step-1
+5. Research paper - link in problem statement
+6. Revision of encoder-decoder architecture
+7. 
