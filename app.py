@@ -148,8 +148,10 @@ if uploaded_file is not None:
             time.sleep(10)
             st.success("Denoised!!")
             st.subheader("Output Audio Time Series Plot")
-            
-            x, sr = sf.read('denoised.wav')
+            if os.path.exists("denoised.wav"):
+                x, sr = sf.read("denoised.wav")
+            else:
+                print("File 'denoised.wav' not found.")
             fig, ax = plt.subplots(figsize=(40, 15))
             ax.plot(x)
             st.pyplot(fig)
