@@ -1,16 +1,22 @@
-import streamlit as st
-import tensorflow as tf
-import numpy as np
-from tensorflow.keras.models import model_from_json
-import time
+from flask import Flask, request, jsonify, send_file
 import os
+import numpy as np
 import librosa
-import librosa.display
-import matplotlib.pyplot as plt
 import soundfile as sf
-import matplotlib as mpl
+from tensorflow.keras.models import model_from_json
 
-mpl.rcParams['agg.path.chunksize'] = 10000
+app = Flask(__name__)
+
+# Load the model once and cache it
+def load_denoising_model():
+    with open('model_unet.json', 'r') as json_file:
+        loaded_model_json = json_file.read()
+    model = model_from_json(loaded_model_json)
+    model.load_weights('model_unet.h5')
+    print("Loaded model from disk")
+    return model
+
+model = load_denoising_model()
 
 # Required Parameters for audio
 sample_rate = 8000
@@ -21,20 +27,6 @@ hop_length_frame_noise = 5000
 nb_samples = 500
 n_fft = 255
 hop_length_fft = 63
-
-# Load the model once and cache it
-@st.cache_resource
-def load_denoising_model():
-    try:
-        with open('model_unet.json', 'r') as json_file:
-            loaded_model_json = json_file.read()
-        model = model_from_json(loaded_model_json)
-        model.load_weights('model_unet.h5')
-        print("Loaded model from disk")
-        return model
-    except Exception as e:
-        st.error(f"An error occurred while loading the model: {e}")
-        return None
 
 # Scaling functions
 def scaled_in(matrix_spec):
@@ -92,70 +84,35 @@ def matrix_spectrogram_to_numpy_audio(m_mag_db, m_phase, frame_length, hop_lengt
                   for i in range(m_mag_db.shape[0])]
     return np.vstack(list_audio)
 
-# Prediction function
-def prediction(model, audio_dir_prediction, dir_save_prediction, audio_input_prediction, audio_output_prediction):
-    if model is None:
-        st.error("Model could not be loaded. Please check the model files.")
-        return
-    
-    audio = audio_files_to_numpy(audio_dir_prediction, audio_input_prediction, sample_rate,
-                                 frame_length, hop_length_frame, min_duration)
-    dim_square_spec = int(n_fft / 2) + 1
-    m_amp_db_audio, m_pha_audio = numpy_audio_to_matrix_spectrogram(audio, dim_square_spec, n_fft, hop_length_fft)
-    X_in = scaled_in(m_amp_db_audio).reshape(-1, dim_square_spec, dim_square_spec, 1)
-    
-    X_pred = model.predict(X_in)
-    inv_sca_X_pred = inv_scaled_ou(X_pred)
-    X_denoise = m_amp_db_audio - inv_sca_X_pred[:, :, :, 0]
-    
-    audio_denoise_recons = matrix_spectrogram_to_numpy_audio(X_denoise, m_pha_audio, frame_length, hop_length_fft)
-    nb_samples = audio_denoise_recons.shape[0]
-    denoise_long = audio_denoise_recons.reshape(1, nb_samples * frame_length) * 10
-    sf.write(dir_save_prediction + audio_output_prediction, denoise_long[0, :], 8000, 'PCM_24')
+@app.route('/denoise', methods=['POST'])
+def denoise_audio():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
 
-# Streamlit interface
-st.title("Audio Denoising")
-model = load_denoising_model()
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
 
-if os.path.exists("input.wav"):
-    os.remove("input.wav")
-if os.path.exists("denoised.wav"):
-    os.remove("denoised.wav")
+    if file:
+        file_path = os.path.join('uploads', file.filename)
+        file.save(file_path)
 
-st.subheader("Choose an Audio file")
-uploaded_file = st.file_uploader("Choose an audio file", type=['wav'])
+        audio = audio_files_to_numpy('', [file_path], sample_rate, frame_length, hop_length_frame, min_duration)
+        dim_square_spec = int(n_fft / 2) + 1
+        m_amp_db_audio, m_pha_audio = numpy_audio_to_matrix_spectrogram(audio, dim_square_spec, n_fft, hop_length_fft)
+        X_in = scaled_in(m_amp_db_audio).reshape(-1, dim_square_spec, dim_square_spec, 1)
 
-if uploaded_file is not None:
-    file_details = {"File Name": uploaded_file.name, "File Type": uploaded_file.type, "File Size": uploaded_file.size}
-    st.write(file_details)
-    
-    if file_details['File Type'] == 'audio/wav':
-        with open('input.wav', 'wb') as f:
-            f.write(uploaded_file.getbuffer())
+        X_pred = model.predict(X_in)
+        inv_sca_X_pred = inv_scaled_ou(X_pred)
+        X_denoise = m_amp_db_audio - inv_sca_X_pred[:, :, :, 0]
 
-        st.subheader("Input")
-        st.audio(uploaded_file.read())
-        st.subheader("Input Audio Time Series Plot")
-        
-        x, sr = sf.read('input.wav')
-        fig, ax = plt.subplots(figsize=(40, 15))
-        ax.plot(x)
-        st.pyplot(fig)
+        audio_denoise_recons = matrix_spectrogram_to_numpy_audio(X_denoise, m_pha_audio, frame_length, hop_length_fft)
+        nb_samples = audio_denoise_recons.shape[0]
+        denoise_long = audio_denoise_recons.reshape(1, nb_samples * frame_length) * 10
+        output_file_path = os.path.join('outputs', 'denoised_' + file.filename)
+        sf.write(output_file_path, denoise_long[0, :], 8000, 'PCM_24')
 
-        prediction(model, '', '', ['input.wav'], 'denoised.wav')
-        
-        with st.spinner("Denoising the audio..."):
-            time.sleep(10)
-            st.success("Denoised!!")
-            st.subheader("Output Audio Time Series Plot")
-            
-            x, sr = sf.read('denoised.wav')
+        return send_file(output_file_path, as_attachment=True)
 
-            if os.path.exists("denoised.wav"):
-                x, sr = sf.read("denoised.wav")
-            else:
-                print("File 'denoised.wav' not found.")
-            fig, ax = plt.subplots(figsize=(40, 15))
-            ax.plot(x)
-            st.pyplot(fig)
-            st.audio('denoised.wav')
+if __name__ == '__main__':
+    app.run(debug=True)
