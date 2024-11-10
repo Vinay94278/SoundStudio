@@ -6,6 +6,8 @@ import librosa
 import soundfile as sf
 from tensorflow.keras.models import model_from_json
 
+# Suppress TensorFlow warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
