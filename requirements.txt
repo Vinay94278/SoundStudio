@@ -5,3 +5,4 @@ matplotlib
 soundfile
 scipy
 flask
+flask_cors
