@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 import os
 import numpy as np
 import librosa
@@ -6,6 +7,7 @@ import soundfile as sf
 from tensorflow.keras.models import model_from_json
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # Load the model once and cache it
 def load_denoising_model():
