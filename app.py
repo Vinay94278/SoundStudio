@@ -88,6 +88,12 @@ def matrix_spectrogram_to_numpy_audio(m_mag_db, m_phase, frame_length, hop_lengt
                   for i in range(m_mag_db.shape[0])]
     return np.vstack(list_audio)
 
+# Create temporary directories for file uploads and outputs (adjusted for deployment)
+UPLOAD_FOLDER = '/tmp/uploads'
+OUTPUT_FOLDER = '/tmp/outputs'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
 @app.route('/denoise', methods=['POST'])
 def denoise_audio():
     if 'file' not in request.files:
@@ -98,25 +104,32 @@ def denoise_audio():
         return jsonify({'error': 'No selected file'}), 400
 
     if file:
-        file_path = os.path.join('uploads', file.filename)
+        # Save the uploaded file to a temporary location
+        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
         file.save(file_path)
 
+        # Process the audio file and apply denoising
         audio = audio_files_to_numpy('', [file_path], sample_rate, frame_length, hop_length_frame, min_duration)
         dim_square_spec = int(n_fft / 2) + 1
         m_amp_db_audio, m_pha_audio = numpy_audio_to_matrix_spectrogram(audio, dim_square_spec, n_fft, hop_length_fft)
         X_in = scaled_in(m_amp_db_audio).reshape(-1, dim_square_spec, dim_square_spec, 1)
 
+        # Perform denoising
         X_pred = model.predict(X_in)
         inv_sca_X_pred = inv_scaled_ou(X_pred)
         X_denoise = m_amp_db_audio - inv_sca_X_pred[:, :, :, 0]
 
+        # Reconstruct the denoised audio
         audio_denoise_recons = matrix_spectrogram_to_numpy_audio(X_denoise, m_pha_audio, frame_length, hop_length_fft)
         nb_samples = audio_denoise_recons.shape[0]
         denoise_long = audio_denoise_recons.reshape(1, nb_samples * frame_length) * 10
-        output_file_path = os.path.join('outputs', 'denoised_' + file.filename)
+
+        # Save the denoised audio to a temporary file
+        output_file_path = os.path.join(OUTPUT_FOLDER, 'denoised_' + file.filename)
         sf.write(output_file_path, denoise_long[0, :], 8000, 'PCM_24')
 
+        # Send the denoised file back as a response
         return send_file(output_file_path, as_attachment=True)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
